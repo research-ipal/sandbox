@@ -348,6 +348,15 @@ function captureFrameImage(source, frameTimeValue) {
   redrawCanvas();
   return true;
 }
+  replayBtn.disabled = false;
+  const numericTime = Number(
+    ((frameTimeValue ?? source.currentTime ?? 0) || 0).toFixed(3)
+  );
+  capturedFrameTimeValue = Number.isFinite(numericTime) ? numericTime : 0;
+
+  redrawCanvas();
+  return true;
+}
 
 function freezeOnFinalFrame() {
   if (!frameCaptured) {
@@ -481,10 +490,6 @@ function normalizeFromPixels(pixels, referenceSize) {
 
 function redrawCanvas() {
   annotationCtx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
-
-  if (frameCaptured && finalFrameCanvas.width && finalFrameCanvas.height) {
-    annotationCtx.drawImage(finalFrameCanvas, 0, 0, annotationCanvas.width, annotationCanvas.height);
-  }
 
   if (expertLines && Array.isArray(expertLines.incisionDetails)) {
     const ctx = annotationCtx;
