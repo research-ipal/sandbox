@@ -229,57 +229,27 @@ function handleVideoError() {
 
 // --- FINAL FRAME CAPTURE LOGIC ---
 
-function resizeCanvases(videoWidth, videoHeight) {
-  const MAX_WIDTH = 1920;
-  let width = videoWidth;
-  let height = videoHeight;
-
-  if (width > MAX_WIDTH) {
-    const ratio = MAX_WIDTH / width;
-    width = MAX_WIDTH;
-    height = videoHeight * ratio;
-  }
-
-  finalFrameCanvas.width = width;
-  finalFrameCanvas.height = height;
-  annotationCanvas.width = width;
-  annotationCanvas.height = height;
-
-  const canvasStage = finalFrameCanvas.parentElement;
-  if (canvasStage) {
-    canvasStage.style.aspectRatio = `${width} / ${height}`;
-  }
-}
+resizecanv
 
 function bufferFrame(source) {
   if (!source.videoWidth || !source.videoHeight) return false;
 
   resizeCanvases(source.videoWidth, source.videoHeight);
 
-  const canvasW = finalFrameCanvas.width;
-  const canvasH = finalFrameCanvas.height;
-
-  const videoW = source.videoWidth;
-  const videoH = source.videoHeight;
-
-  // Calculate aspect-fit (contain)
-  const scale = Math.min(canvasW / videoW, canvasH / videoH);
-  const drawW = videoW * scale;
-  const drawH = videoH * scale;
-
-  const offsetX = (canvasW - drawW) / 2;
-  const offsetY = (canvasH - drawH) / 2;
-
-  overlayCtx.clearRect(0, 0, canvasW, canvasH);
-
+  overlayCtx.clearRect(0, 0, finalFrameCanvas.width, finalFrameCanvas.height);
   overlayCtx.drawImage(
     source,
-    0, 0, videoW, videoH,     // source
-    offsetX, offsetY, drawW, drawH  // destination
+    0,
+    0,
+    source.videoWidth,
+    source.videoHeight,
+    0,
+    0,
+    finalFrameCanvas.width,
+    finalFrameCanvas.height
   );
 
-  annotationCtx.clearRect(0, 0, canvasW, canvasH);
-
+  annotationCtx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
   finalFrameBuffered = true;
   return true;
 }
@@ -361,18 +331,14 @@ function handleVideoLoaded() {
   videoStatus.textContent = "Clip loaded. Tap play to begin.";
   video.controls = true;
   video.setAttribute("controls", "");
+  video.style.objectFit = "contain";
+
   video.play().catch(() => {
     try {
       video.pause();
     } catch (error) {}
     videoStatus.textContent = "Clip loaded. Press play to begin.";
   });
-}
-
-function handleVideoPlay() {
-  videoStatus.textContent = frameCaptured
-    ? "Replaying clip. The final frame remains available below."
-    : "Watching clip…";
 }
 
 function handleReplay() {
