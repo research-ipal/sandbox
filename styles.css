@@ -158,6 +158,35 @@ body {
   display: block;
 }
 
+.canvas-stage {
+  position: relative;
+  width: 100%;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.45);
+  transform: translateZ(0);
+}
+
+.canvas-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  border-radius: 0;
+}
+
+#finalFrame {
+  z-index: 1;
+}
+
+#annotationCanvas {
+  z-index: 2;
+  touch-action: none;
+}
+
 .canvas-hint {
   margin: 0;
   font-size: 0.9rem;
@@ -249,31 +278,4 @@ button:not(:disabled):active {
   button {
     width: 100%;
   }
-  .canvas-stage {
-  position: relative;
-  width: 100%;
-  border-radius: 18px;
-  overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: rgba(15, 23, 42, 0.45);
-  transform: translateZ(0);
-}
-
-.canvas-stage canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  border: 0;
-  border-radius: 0;
-}
-
-#finalFrame {
-  z-index: 1;
-}
-
-#annotationCanvas {
-  z-index: 2;
-  touch-action: none;
 }
