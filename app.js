@@ -15,19 +15,27 @@ let userAnnotations = [];
 let capturedFrameData = null;
 
 // ============================================================================  
-// DOM ELEMENTS  
+// DOM ELEMENTS - UPDATED TO MATCH YOUR HTML  
 // ============================================================================
 
-const videoElement = document.getElementById('surgeryVideo');  
-const videoPoster = document.getElementById('videoPoster');  
+const videoElement = document.getElementById('caseVideo');  
 const replayBtn = document.getElementById('replayBtn');  
-const finalFrameCanvas = document.getElementById('finalFrameCanvas');  
+const finalFrameCanvas = document.getElementById('finalFrame');  
 const annotationCanvas = document.getElementById('annotationCanvas');  
-const canvasStage = document.querySelector('.canvas-stage');  
+const canvasContainer = document.getElementById('canvasContainer');  
 const clearLineBtn = document.getElementById('clearLineBtn');  
-const submitBtn = document.getElementById('submitBtn');  
-const videoContainer = document.querySelector('.video-container');  
-const loadingMessage = document.querySelector('.loading-message');
+const submitBtn = document.getElementById('submitAnnotationBtn');  
+const videoShell = document.querySelector('.video-shell');  
+const videoStatus = document.getElementById('videoStatus');  
+const clipLabel = document.getElementById('clipLabel');  
+const participantIdInput = document.getElementById('participantIdInput');  
+const fatigueInput = document.getElementById('fatigueInput');  
+const confidenceSection = document.getElementById('confidenceSection');  
+const confidenceInput = document.getElementById('confidenceInput');  
+const submitConfidenceBtn = document.getElementById('submitConfidenceBtn');  
+const completionCard = document.getElementById('completionCard');  
+const annotationStatus = document.getElementById('annotationStatus');  
+const submissionStatus = document.getElementById('submissionStatus');
 
 // ============================================================================  
 // UTILITY FUNCTIONS  
@@ -80,6 +88,22 @@ function denormalizeCoordinates(canvas, normalized) {
     x: normalized.x * canvas.width,  
     y: normalized.y * canvas.height  
   };  
+}
+
+/**  
+ * Show toast notification  
+ */  
+function showToast(message, duration = 3000) {  
+  const template = document.getElementById('toastTemplate');  
+  const toast = template.content.cloneNode(true).querySelector('.toast');  
+  toast.textContent = message;  
+  document.body.appendChild(toast);  
+    
+  setTimeout(() => toast.classList.add('toast--visible'), 10);  
+  setTimeout(() => {  
+    toast.classList.remove('toast--visible');  
+    setTimeout(() => toast.remove(), 200);  
+  }, duration);  
 }
 
 // ============================================================================  
@@ -165,6 +189,8 @@ function captureFinalFrame(videoElement, canvas) {
 function handleVideoEnd() {  
   console.log('Video ended, capturing final frame...');  
     
+  videoStatus.textContent = 'Video ended. Capturing final frame...';  
+    
   // Small delay to ensure last frame is fully rendered  
   setTimeout(() => {  
     captureFinalFrame(videoElement, finalFrameCanvas);  
@@ -180,9 +206,13 @@ function handleVideoEnd() {
       
     // Switch UI  
     videoElement.style.display = 'none';  
-    if (videoPoster) videoPoster.style.display = 'none';  
-    canvasStage.style.display = 'block';  
-    replayBtn.style.display = 'inline-block';  
+    finalFrameCanvas.hidden = false;  
+    canvasContainer.hidden = false;  
+    replayBtn.disabled = false;  
+    clearLineBtn.disabled = false;  
+      
+    videoStatus.textContent = 'Frame captured. Draw your incision line below.';  
+    annotationStatus.textContent = 'Tap or click to place the start of the incision, drag, and release to finish.';  
       
     console.log('Frame captured successfully');  
   }, 100);  
@@ -249,7 +279,7 @@ function redrawAnnotations() {
   ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);  
     
   // Redraw expert annotations first (background)  
-  if (currentClip.annotationType === 'gt') {  
+  if (currentClip && currentClip.annotationType === 'gt') {  
     drawExpertAnnotations();  
   }  
     
@@ -284,7 +314,7 @@ function drawLine(start, end, color = 'rgba(255, 0, 0, 0.8)', lineWidth = 4, cle
     
   if (clear) {  
     ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);  
-    if (currentClip.annotationType === 'gt') {  
+    if (currentClip && currentClip.annotationType === 'gt') {  
       drawExpertAnnotations();  
     }  
   }  
@@ -326,11 +356,12 @@ function clearAnnotations() {
   const ctx = annotationCanvas.getContext('2d');  
   ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);  
     
-  if (currentClip.annotationType === 'gt') {  
+  if (currentClip && currentClip.annotationType === 'gt') {  
     drawExpertAnnotations();  
   }  
     
   updateSubmitButton();  
+  showToast('Annotation cleared');  
 }
 
 // ============================================================================  
@@ -425,13 +456,15 @@ function loadClip(index) {
   currentLine = null;  
     
   // Update UI  
-  document.getElementById('clipCounter').textContent =   
-    `Clip ${index + 1} of ${window.ANNOTATION_CLIPS.length}`;  
+  clipLabel.textContent = `2. Review Clip (${index + 1} of ${window.ANNOTATION_CLIPS.length})`;  
     
-  // Reset canvases  
-  canvasStage.style.display = 'none';  
+  // Reset UI state  
+  finalFrameCanvas.hidden = true;  
+  canvasContainer.hidden = true;  
   videoElement.style.display = 'block';  
-  replayBtn.style.display = 'none';  
+  replayBtn.disabled = true;  
+  clearLineBtn.disabled = true;  
+  confidenceSection.hidden = true;  
     
   // Clear canvases  
   const finalCtx = finalFrameCanvas.getContext('2d');  
@@ -440,14 +473,9 @@ function loadClip(index) {
   annotationCtx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);  
     
   // Load video  
-  if (loadingMessage) loadingMessage.style.display = 'block';  
+  videoStatus.textContent = 'Loading clip...';  
     
   videoElement.src = currentClip.src;  
-  if (currentClip.poster) {  
-    videoPoster.src = currentClip.poster;  
-    videoPoster.style.display = 'block';  
-  }  
-    
   videoElement.load();  
     
   updateSubmitButton();  
@@ -460,27 +488,32 @@ function loadClip(index) {
  */  
 function replayVideo() {  
   capturedFrameData = null;  
-  canvasStage.style.display = 'none';  
+  finalFrameCanvas.hidden = true;  
+  canvasContainer.hidden = true;  
   videoElement.style.display = 'block';  
-  if (videoPoster) videoPoster.style.display = 'block';  
-  replayBtn.style.display = 'none';  
+  replayBtn.disabled = true;  
+  clearLineBtn.disabled = true;  
     
   videoElement.currentTime = 0;  
   videoElement.play().catch(err => {  
     console.error('Replay failed:', err);  
+    showToast('Failed to replay video');  
   });  
     
   clearAnnotations();  
+  videoStatus.textContent = 'Replaying clip...';  
 }
 
 /**  
  * Show completion message  
  */  
 function showCompletionMessage() {  
-  document.querySelector('.clip-section').style.display = 'none';  
-  document.querySelector('.annotation-section').style.display = 'none';  
-  document.querySelector('.submit-section').style.display = 'none';  
-  document.getElementById('completionMessage').style.display = 'block';  
+  document.getElementById('participantCard').style.display = 'none';  
+  document.getElementById('videoCard').style.display = 'none';  
+  document.getElementById('canvasCard').style.display = 'none';  
+  document.getElementById('submitCard').style.display = 'none';  
+  confidenceSection.hidden = true;  
+  completionCard.hidden = false;  
 }
 
 // ============================================================================  
@@ -495,9 +528,9 @@ function updateSubmitButton() {
   submitBtn.disabled = !hasAnnotation;  
     
   if (hasAnnotation) {  
-    submitBtn.textContent = 'Submit to Investigator and Next Clip';  
+    submissionStatus.textContent = 'Ready to submit!';  
   } else {  
-    submitBtn.textContent = 'Draw the incision on the frozen frame to enable submission.';  
+    submissionStatus.textContent = 'Draw the incision on the frozen frame to enable submission.';  
   }  
 }
 
@@ -505,19 +538,19 @@ function updateSubmitButton() {
  * Submit annotation  
  */  
 function submitAnnotation() {  
-  const email = document.getElementById('participantEmail').value.trim();  
-  const alertness = document.getElementById('alertnessLevel').value;  
+  const email = participantIdInput.value.trim();  
+  const alertness = fatigueInput.value;  
     
   // Validation  
   if (!email) {  
     alert('Please enter your email address.');  
-    document.getElementById('participantEmail').focus();  
+    participantIdInput.focus();  
     return;  
   }  
     
   if (!alertness) {  
     alert('Please select how you are feeling right now.');  
-    document.getElementById('alertnessLevel').focus();  
+    fatigueInput.focus();  
     return;  
   }  
     
@@ -554,16 +587,18 @@ function submitAnnotation() {
   //   body: JSON.stringify(submissionData)  
   // });  
     
+  showToast('Annotation submitted!');  
+    
   // Show confidence question  
-  document.getElementById('confidenceSection').style.display = 'block';  
-  document.getElementById('confidenceSection').scrollIntoView({ behavior: 'smooth' });  
+  confidenceSection.hidden = false;  
+  confidenceSection.scrollIntoView({ behavior: 'smooth' });  
 }
 
 /**  
  * Submit confidence rating and move to next clip  
  */  
 function submitConfidence() {  
-  const confidence = document.querySelector('input[name="confidence"]:checked');  
+  const confidence = confidenceInput.value;  
     
   if (!confidence) {  
     alert('Please select your confidence level.');  
@@ -572,8 +607,8 @@ function submitConfidence() {
     
   const confidenceData = {  
     clipId: currentClip.id,  
-    participantEmail: document.getElementById('participantEmail').value,  
-    confidenceLevel: parseInt(confidence.value),  
+    participantEmail: participantIdInput.value,  
+    confidenceLevel: parseInt(confidence),  
     timestamp: new Date().toISOString()  
   };  
     
@@ -581,13 +616,11 @@ function submitConfidence() {
     
   // TODO: Send to backend  
     
-  // Hide confidence section  
-  document.getElementById('confidenceSection').style.display = 'none';  
+  showToast('Confidence submitted!');  
     
-  // Uncheck radio buttons  
-  document.querySelectorAll('input[name="confidence"]').forEach(radio => {  
-    radio.checked = false;  
-  });  
+  // Reset confidence input  
+  confidenceInput.value = '';  
+  confidenceSection.hidden = true;  
     
   // Load next clip  
   loadClip(currentClipIndex + 1);  
@@ -631,8 +664,7 @@ function setupEventListeners() {
   videoElement.addEventListener('ended', handleVideoEnd);  
     
   videoElement.addEventListener('loadeddata', () => {  
-    if (loadingMessage) loadingMessage.style.display = 'none';  
-    if (videoPoster) videoPoster.style.display = 'none';  
+    videoStatus.textContent = 'Video loaded. Click play to begin.';  
       
     // iOS fix: force render cycle  
     if (isIOS) {  
@@ -643,13 +675,17 @@ function setupEventListeners() {
     
   videoElement.addEventListener('canplay', () => {  
     console.log('Video ready to play');  
+    videoStatus.textContent = 'Video ready. Playing...';  
+  });  
+    
+  videoElement.addEventListener('play', () => {  
+    videoStatus.textContent = 'Video playing...';  
   });  
     
   videoElement.addEventListener('error', (e) => {  
     console.error('Video error:', e);  
-    if (loadingMessage) {  
-      loadingMessage.textContent = 'Error loading video. Please refresh.';  
-    }  
+    videoStatus.textContent = 'Error loading video. Please refresh.';  
+    showToast('Video failed to load');  
   });  
     
   // Mouse events for desktop  
@@ -679,13 +715,12 @@ function setupEventListeners() {
   clearLineBtn.addEventListener('click', clearAnnotations);  
   replayBtn.addEventListener('click', replayVideo);  
   submitBtn.addEventListener('click', submitAnnotation);  
-    
-  document.getElementById('submitConfidence').addEventListener('click', submitConfidence);  
+  submitConfidenceBtn.addEventListener('click', submitConfidence);  
     
   // Window resize and orientation change  
   window.addEventListener('resize', handleResize);  
   window.addEventListener('orientationchange', () => {  
-    setTimeout(handleResize, 300); // Delay for orientation change completion  
+    setTimeout(handleResize, 300);  
   });  
 }
 
@@ -702,9 +737,7 @@ function initializeApp() {
   // Check for required globals  
   if (!window.ANNOTATION_CLIPS || window.ANNOTATION_CLIPS.length === 0) {  
     console.error('No clips found in ANNOTATION_CLIPS');  
-    if (loadingMessage) {  
-      loadingMessage.textContent = 'No clips available.';  
-    }  
+    videoStatus.textContent = 'No clips available. Please check configuration.';  
     return;  
   }  
     
@@ -723,7 +756,7 @@ function initializeApp() {
 // START APPLICATION  
 // ============================================================================
 
-// Wait for DOM and all resources to be ready  
+// Wait for DOM to be ready  
 if (document.readyState === 'loading') {  
   document.addEventListener('DOMContentLoaded', initializeApp);  
 } else {  
