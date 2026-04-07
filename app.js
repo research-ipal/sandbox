@@ -57,13 +57,15 @@ let clips = [];
 
 // Mobile-specific state variables  
 let mobileRetryCount = 0;  
-const MAX_MOBILE_RETRIES = 5;  
+const MAX_MOBILE_RETRIES = 10;  
 let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||   
                      ('ontouchstart' in window) ||   
                      (navigator.maxTouchPoints > 0);
 
-// Track if we should capture on ended event (mobile fallback)  
-let pendingMobileCapture = false;
+// Mobile buffer polling  
+let mobileBufferPollInterval = null;  
+let mobileSeekAttempts = 0;  
+const MAX_MOBILE_SEEK_ATTEMPTS = 15;
 
 function showToast(message) {  
   const toast = toastTemplate.content.firstElementChild.cloneNode(true);  
@@ -198,10 +200,12 @@ function handleVideoError() {
   showToast(message);  
   replayBtn.disabled = true;  
   teardownHelperVideo();  
+  stopMobileBufferPolling();  
 }
 
 function resetAnnotationState() {  
   teardownHelperVideo();  
+  stopMobileBufferPolling();  
   frameCaptured = false;  
   activeLine = null;  
   expertLines = null;  
@@ -209,7 +213,7 @@ function resetAnnotationState() {
   latestPayload = null;  
   submissionInFlight = false;  
   mobileRetryCount = 0;  
-  pendingMobileCapture = false;
+  mobileSeekAttempts = 0;
 
   annotationCtx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);  
   overlayCtx.clearRect(0, 0, finalFrameCanvas.width, finalFrameCanvas.height);
@@ -264,20 +268,186 @@ function teardownHelperVideo() {
   mobileRetryCount = 0;  
 }
 
+// Mobile buffer polling functions  
+function stopMobileBufferPolling() {  
+  if (mobileBufferPollInterval) {  
+    clearInterval(mobileBufferPollInterval);  
+    mobileBufferPollInterval = null;  
+  }  
+}
+
+function isEndBuffered(videoElement) {  
+  if (!videoElement || !Number.isFinite(videoElement.duration)) {  
+    return false;  
+  }  
+    
+  const duration = videoElement.duration;  
+  const buffered = videoElement.buffered;  
+    
+  // Check if any buffered range includes near the end of the video  
+  for (let i = 0; i < buffered.length; i++) {  
+    const end = buffered.end(i);  
+    // Consider it buffered if within 0.5 seconds of the end  
+    if (end >= duration - 0.5) {  
+      return true;  
+    }  
+  }  
+  return false;  
+}
+
+function startMobileBufferPolling() {  
+  if (mobileBufferPollInterval || frameCaptured) {  
+    return;  
+  }  
+    
+  console.log("Starting mobile buffer polling...");  
+    
+  mobileBufferPollInterval = setInterval(() => {  
+    if (frameCaptured) {  
+      stopMobileBufferPolling();  
+      return;  
+    }  
+      
+    // Check if the end of the video is buffered  
+    if (isEndBuffered(video)) {  
+      console.log("End of video is buffered, attempting capture...");  
+      attemptMobileCapture();  
+    }  
+  }, 500); // Check every 500ms  
+}
+
+function attemptMobileCapture() {  
+  if (frameCaptured || mobileSeekAttempts >= MAX_MOBILE_SEEK_ATTEMPTS) {  
+    stopMobileBufferPolling();  
+    return;  
+  }  
+    
+  mobileSeekAttempts++;  
+    
+  const duration = video.duration;  
+  if (!Number.isFinite(duration)) {  
+    return;  
+  }  
+    
+  // Create a temporary video element for seeking on mobile  
+  const tempVideo = document.createElement("video");  
+  tempVideo.crossOrigin = "anonymous";  
+  tempVideo.muted = true;  
+  tempVideo.playsInline = true;  
+  tempVideo.setAttribute("playsinline", "");  
+  tempVideo.setAttribute("webkit-playsinline", "");  
+  tempVideo.preload = "auto";  
+    
+  // Hide it but add to DOM  
+  tempVideo.style.position = "absolute";  
+  tempVideo.style.width = "1px";  
+  tempVideo.style.height = "1px";  
+  tempVideo.style.opacity = "0";  
+  tempVideo.style.pointerEvents = "none";  
+  tempVideo.style.left = "-9999px";  
+  document.body.appendChild(tempVideo);  
+    
+  let captured = false;  
+  let cleanedUp = false;  
+    
+  const cleanup = () => {  
+    if (cleanedUp) return;  
+    cleanedUp = true;  
+    tempVideo.removeEventListener("seeked", onSeeked);  
+    tempVideo.removeEventListener("error", onError);  
+    tempVideo.removeEventListener("loadeddata", onLoadedData);  
+    try {  
+      tempVideo.pause();  
+      tempVideo.removeAttribute("src");  
+      tempVideo.load();  
+    } catch (e) {  
+      // ignore  
+    }  
+    if (tempVideo.parentNode) {  
+      tempVideo.parentNode.removeChild(tempVideo);  
+    }  
+  };  
+    
+  const onSeeked = () => {  
+    if (captured || frameCaptured) {  
+      cleanup();  
+      return;  
+    }  
+      
+    // Wait for frame to render  
+    requestAnimationFrame(() => {  
+      requestAnimationFrame(() => {  
+        if (frameCaptured) {  
+          cleanup();  
+          return;  
+        }  
+          
+        if (tempVideo.videoWidth && tempVideo.videoHeight && tempVideo.readyState >= 2) {  
+          const success = captureFrameImage(tempVideo, tempVideo.currentTime);  
+          if (success) {  
+            captured = true;  
+            stopMobileBufferPolling();  
+            console.log("Mobile capture successful via temp video");  
+          }  
+        }  
+        cleanup();  
+      });  
+    });  
+  };  
+    
+  const onError = () => {  
+    console.warn("Temp video error, will retry...");  
+    cleanup();  
+  };  
+    
+  const onLoadedData = () => {  
+    if (captured || frameCaptured) {  
+      cleanup();  
+      return;  
+    }  
+      
+    // Try to seek to near the end  
+    const targetTime = Math.max(duration - 0.1, 0);  
+    try {  
+      tempVideo.currentTime = targetTime;  
+    } catch (e) {  
+      console.warn("Seek failed:", e);  
+      cleanup();  
+    }  
+  };  
+    
+  tempVideo.addEventListener("seeked", onSeeked);  
+  tempVideo.addEventListener("error", onError);  
+  tempVideo.addEventListener("loadeddata", onLoadedData);  
+    
+  // Set source and load  
+  tempVideo.src = currentClip.src;  
+  tempVideo.load();  
+    
+  // Timeout cleanup  
+  setTimeout(() => {  
+    if (!captured && !frameCaptured) {  
+      cleanup();  
+    }  
+  }, 5000);  
+}
+
 function prepareHelperVideo() {  
   teardownHelperVideo();  
+  stopMobileBufferPolling();  
+    
   if (!currentClip?.src) {  
     return;  
   }
 
-  // On mobile, we'll rely on capturing from the main video at the end  
-  // The helper video approach is unreliable on mobile Safari/Chrome  
+  // On mobile, use buffer polling approach  
   if (isMobileDevice) {  
-    pendingMobileCapture = true;  
-    console.log("Mobile device detected - will capture from main video when it ends");  
+    console.log("Mobile device detected - using buffer polling strategy");  
+    // Start polling once the video starts playing  
     return;  
   }
 
+  // Desktop: use helper video approach  
   helperVideo = document.createElement("video");  
   helperVideo.crossOrigin = "anonymous";  
   helperVideo.preload = "auto";  
@@ -438,7 +608,8 @@ function captureFrameImage(source, frameTimeValue) {
   annotationCtx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
 
   frameCaptured = true;  
-  canvasContainer.hidden = false;
+  canvasContainer.hidden = false;  
+  stopMobileBufferPolling();
 
   annotationStatus.textContent = expertLines  
     ? "Final frame ready. Draw your incision line on top of the safety corridor."  
@@ -501,13 +672,19 @@ function handleVideoPlay() {
   videoStatus.textContent = frameCaptured  
     ? "Replaying clip. The final frame remains available below."  
     : "Watching clip…";  
+    
+  // Start mobile buffer polling when video starts playing  
+  if (isMobileDevice && !frameCaptured) {  
+    startMobileBufferPolling();  
+  }  
 }
 
 function handleVideoEnded() {  
   video.controls = true;  
   video.setAttribute("controls", "");  
+  stopMobileBufferPolling();  
     
-  // On mobile, this is our primary capture method  
+  // On mobile, this is our fallback capture method  
   if (isMobileDevice && !frameCaptured) {  
     // The video has ended, so currentTime should be at (or very near) the end  
     // Use a small delay to ensure the final frame is rendered  
@@ -555,8 +732,7 @@ function handleVideoTimeUpdate() {
     return;  
   }
 
-  // On mobile, don't capture during timeupdate - wait for ended event  
-  // This ensures we get the actual final frame  
+  // On mobile, don't capture during timeupdate - use buffer polling instead  
   if (isMobileDevice) {  
     return;  
   }
@@ -570,6 +746,14 @@ function handleVideoTimeUpdate() {
         ? "Final frame ready. Draw your incision line on top of the safety corridor."  
         : "Final frame ready. Review the clip above and draw your incision when ready.";  
     }  
+  }  
+}
+
+function handleVideoProgress() {  
+  // On mobile, check if end is buffered and try to capture  
+  if (isMobileDevice && !frameCaptured && isEndBuffered(video)) {  
+    console.log("Progress event: end is buffered, attempting capture");  
+    attemptMobileCapture();  
   }  
 }
 
@@ -822,7 +1006,8 @@ function clearLine() {
 function finishStudy() {  
   video.pause();  
   video.removeAttribute("src");  
-  video.load();
+  video.load();  
+  stopMobileBufferPolling();
 
   annotationSections.forEach((section) => {  
     if (section) section.hidden = true;  
@@ -996,6 +1181,7 @@ video.addEventListener("error", handleVideoError, { once: false });
 video.addEventListener("play", handleVideoPlay);  
 video.addEventListener("timeupdate", handleVideoTimeUpdate);  
 video.addEventListener("ended", handleVideoEnded);  
+video.addEventListener("progress", handleVideoProgress);  
 clearLineBtn.addEventListener("click", clearLine);  
 submitAnnotationBtn.addEventListener("click", submitAnnotation);
 
